@@ -1231,12 +1231,6 @@ export function Composer({
 
   // Clear send error when user edits the input
   useEffect(() => {
-    if (sendError && userInput) {
-      setSendError(null);
-    }
-  }, [userInput, sendError]);
-
-  useEffect(() => {
     setCursorIndex((current) => Math.min(current, userInput.length));
   }, [userInput.length]);
 
@@ -1244,7 +1238,13 @@ export function Composer({
   const { pickFiles } = useFilePicker();
   const agentIdRef = useRef(agentId);
   const sendAgentMessageRef = useRef<
-    ((agentId: string, text: string, attachments: ComposerAttachment[]) => Promise<void>) | null
+    | ((
+        agentId: string,
+        text: string,
+        attachments: ComposerAttachment[],
+        activeTurnBehavior: "interrupt" | "steer",
+      ) => Promise<void>)
+    | null
   >(null);
   const onSubmitMessageRef = useRef(onSubmitMessage);
 
@@ -1305,9 +1305,14 @@ export function Composer({
       if (!sendAgentMessageRef.current) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      await sendAgentMessageRef.current(agentIdRef.current, text, submitAttachments);
+      await sendAgentMessageRef.current(
+        agentIdRef.current,
+        text,
+        submitAttachments,
+        appSettings.sendBehavior === "steer" ? "steer" : "interrupt",
+      );
     },
-    [cwd, onMessageSent, t],
+    [appSettings.sendBehavior, cwd, onMessageSent, t],
   );
 
   useEffect(() => {
@@ -1319,6 +1324,7 @@ export function Composer({
       targetAgentId: string,
       text: string,
       sendAttachments: ComposerAttachment[],
+      activeTurnBehavior: "interrupt" | "steer",
     ) => {
       if (!client) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
@@ -1333,10 +1339,16 @@ export function Composer({
         }),
         encodeImages,
         submission: createMessageSubmissionWriter(serverId),
+        activeTurnBehavior,
+        activeTurnId:
+          activeTurnBehavior === "steer"
+            ? (useSessionStore.getState().sessions[serverId]?.agents.get(targetAgentId)?.activeTurn
+                ?.turnId ?? undefined)
+            : undefined,
       });
       onAttentionPromptSend?.();
     };
-  }, [client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
+  }, [appSettings.sendBehavior, client, onAttentionPromptSend, serverId, supportsForgeSearch, t]);
 
   useEffect(() => {
     onSubmitMessageRef.current = onSubmitMessage;
@@ -2132,7 +2144,12 @@ export function Composer({
   const messageInputAutoFocus = autoFocus && isDesktopWebBreakpoint;
   const submitLoadingPressHandler = isAgentRunning ? handleCancelAgent : undefined;
   const sendErrorNode = useMemo(
-    () => (sendError ? <Text style={styles.sendErrorText}>{sendError}</Text> : null),
+    () =>
+      sendError ? (
+        <Text accessibilityRole="alert" style={styles.sendErrorText}>
+          {sendError}
+        </Text>
+      ) : null,
     [sendError],
   );
   const githubEmptyText = githubSearchResultsQuery.isFetching
